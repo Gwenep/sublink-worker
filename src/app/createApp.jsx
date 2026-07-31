@@ -68,154 +68,9 @@ export function createApp(bindings = {}) {
         );
     });
 
-    app.get('/singbox', async (c) => {
-        try {
-            const config = c.req.query('config');
-            if (!config) {
-                return c.text('Missing config parameter', 400);
-            }
-
-            const selectedRules = parseSelectedRules(c.req.query('selectedRules'));
-            const customRules = parseJsonArray(c.req.query('customRules'));
-            const ua = c.req.query('ua') || getRequestHeader(c.req, 'User-Agent') || DEFAULT_USER_AGENT;
-            const groupByCountry = parseBooleanFlag(c.req.query('group_by_country'));
-            const includeAutoSelect = c.req.query('include_auto_select') !== 'false';
-            const enableClashUI = parseBooleanFlag(c.req.query('enable_clash_ui'));
-            const externalController = c.req.query('external_controller');
-            const externalUiDownloadUrl = c.req.query('external_ui_download_url');
-            const configId = c.req.query('configId');
-            const lang = c.get('lang');
-
-            const requestedSingboxVersion = c.req.query('singbox_version') || c.req.query('sb_version') || c.req.query('sb_ver');
-            const requestUserAgent = getRequestHeader(c.req, 'User-Agent');
-            const singboxConfigVersion = resolveSingboxConfigVersion(requestedSingboxVersion, requestUserAgent);
-
-            let baseConfig = singboxConfigVersion === '1.11' ? SING_BOX_CONFIG_V1_11 : SING_BOX_CONFIG;
-            if (configId) {
-                const storage = requireConfigStorage(services.configStorage);
-                const storedConfig = await storage.getConfigById(configId);
-                if (storedConfig) {
-                    baseConfig = storedConfig;
-                }
-            }
-
-            const builder = new SingboxConfigBuilder(
-                config,
-                selectedRules,
-                customRules,
-                baseConfig,
-                lang,
-                ua,
-                groupByCountry,
-                enableClashUI,
-                externalController,
-                externalUiDownloadUrl,
-                singboxConfigVersion,
-                includeAutoSelect
-            );
-            await builder.build();
-            const userinfo = builder.getSubscriptionUserinfo();
-            if (userinfo) {
-                c.header('subscription-userinfo', userinfo);
-            }
-            return c.json(builder.config);
-        } catch (error) {
-            return handleError(c, error, runtime.logger);
-        }
-    });
-
-    app.get('/clash', async (c) => {
-        try {
-            const config = c.req.query('config');
-            if (!config) {
-                return c.text('Missing config parameter', 400);
-            }
-
-            const selectedRules = parseSelectedRules(c.req.query('selectedRules'));
-            const customRules = parseJsonArray(c.req.query('customRules'));
-            const ua = c.req.query('ua') || getRequestHeader(c.req, 'User-Agent') || DEFAULT_USER_AGENT;
-            const groupByCountry = parseBooleanFlag(c.req.query('group_by_country'));
-            const includeAutoSelect = c.req.query('include_auto_select') !== 'false';
-            const enableClashUI = parseBooleanFlag(c.req.query('enable_clash_ui'));
-            const externalController = c.req.query('external_controller');
-            const externalUiDownloadUrl = c.req.query('external_ui_download_url');
-            const configId = c.req.query('configId');
-            const lang = c.get('lang');
-
-            let baseConfig;
-            if (configId) {
-                const storage = requireConfigStorage(services.configStorage);
-                baseConfig = await storage.getConfigById(configId);
-            }
-
-            const builder = new ClashConfigBuilder(
-                config,
-                selectedRules,
-                customRules,
-                baseConfig,
-                lang,
-                ua,
-                groupByCountry,
-                enableClashUI,
-                externalController,
-                externalUiDownloadUrl,
-                includeAutoSelect
-            );
-            await builder.build();
-            const userinfo = builder.getSubscriptionUserinfo();
-            const headers = { 'Content-Type': 'text/yaml; charset=utf-8' };
-            if (userinfo) {
-                headers['subscription-userinfo'] = userinfo;
-            }
-            return c.text(builder.formatConfig(), 200, headers);
-        } catch (error) {
-            return handleError(c, error, runtime.logger);
-        }
-    });
-
-    app.get('/surge', async (c) => {
-        try {
-            const config = c.req.query('config');
-            if (!config) {
-                return c.text('Missing config parameter', 400);
-            }
-
-            const selectedRules = parseSelectedRules(c.req.query('selectedRules'));
-            const customRules = parseJsonArray(c.req.query('customRules'));
-            const ua = c.req.query('ua') || getRequestHeader(c.req, 'User-Agent') || DEFAULT_USER_AGENT;
-            const groupByCountry = parseBooleanFlag(c.req.query('group_by_country'));
-            const includeAutoSelect = c.req.query('include_auto_select') !== 'false';
-            const configId = c.req.query('configId');
-            const lang = c.get('lang');
-
-            let baseConfig;
-            if (configId) {
-                const storage = requireConfigStorage(services.configStorage);
-                baseConfig = await storage.getConfigById(configId);
-            }
-
-            const builder = new SurgeConfigBuilder(
-                config,
-                selectedRules,
-                customRules,
-                baseConfig,
-                lang,
-                ua,
-                groupByCountry,
-                includeAutoSelect
-            );
-            builder.setSubscriptionUrl(c.req.url);
-            await builder.build();
-
-            const userinfo = builder.getSubscriptionUserinfo();
-            if (userinfo) {
-                c.header('subscription-userinfo', userinfo);
-            }
-            return c.text(builder.formatConfig());
-        } catch (error) {
-            return handleError(c, error, runtime.logger);
-        }
-    });
+    app.get('/singbox', (c) => handleSingboxRequest(c, c.req.query(), services, runtime));
+    app.get('/clash', (c) => handleClashRequest(c, c.req.query(), services, runtime));
+    app.get('/surge', (c) => handleSurgeRequest(c, c.req.query(), services, runtime));
 
     app.get('/subconverter', (c) => {
         try {
@@ -260,55 +115,7 @@ export function createApp(bindings = {}) {
         }
     });
 
-    app.get('/xray', async (c) => {
-        const inputString = c.req.query('config');
-        if (!inputString) {
-            return c.text('Missing config parameter', 400);
-        }
-
-        const proxylist = inputString.split('\n');
-        const finalProxyList = [];
-        let subscriptionUserinfo;
-        const userAgent = c.req.query('ua') || getRequestHeader(c.req, 'User-Agent') || DEFAULT_USER_AGENT;
-        const headers = { 'User-Agent': userAgent };
-
-        for (const proxy of proxylist) {
-            const trimmedProxy = proxy.trim();
-            if (!trimmedProxy) continue;
-
-            if (trimmedProxy.startsWith('http://') || trimmedProxy.startsWith('https://')) {
-                try {
-                    const response = await fetch(trimmedProxy, { method: 'GET', headers });
-                    const fetchedUserinfo = response.headers.get('subscription-userinfo');
-                    if (fetchedUserinfo && subscriptionUserinfo === undefined) {
-                        subscriptionUserinfo = fetchedUserinfo;
-                    }
-                    const text = await response.text();
-                    let processed = tryDecodeSubscriptionLines(text, { decodeUriComponent: true });
-                    if (!Array.isArray(processed)) processed = [processed];
-                    finalProxyList.push(...processed.filter(item => typeof item === 'string' && item.trim() !== ''));
-                } catch (e) {
-                    runtime.logger.warn('Failed to fetch the proxy', e);
-                }
-            } else {
-                let processed = tryDecodeSubscriptionLines(trimmedProxy);
-                if (!Array.isArray(processed)) processed = [processed];
-                finalProxyList.push(...processed.filter(item => typeof item === 'string' && item.trim() !== ''));
-            }
-        }
-
-        const finalString = finalProxyList.join('\n');
-        if (!finalString) {
-            return c.text('Missing config parameter', 400);
-        }
-
-        const responseHeaders = {};
-        if (subscriptionUserinfo) {
-            responseHeaders['subscription-userinfo'] = subscriptionUserinfo;
-        }
-
-        return c.text(encodeBase64(finalString), 200, responseHeaders);
-    });
+    app.get('/xray', (c) => handleXrayRequest(c, c.req.query(), services, runtime));
 
     app.get('/shorten-v2', async (c) => {
         try {
@@ -332,24 +139,38 @@ export function createApp(bindings = {}) {
         }
     });
 
-    const redirectHandler = (prefix) => async (c) => {
+    const SHORT_LINK_HANDLERS = {
+        surge: handleSurgeRequest,
+        singbox: handleSingboxRequest,
+        clash: handleClashRequest,
+        xray: handleXrayRequest,
+    };
+
+    const shortLinkHandler = (type) => async (c) => {
         try {
             const code = c.req.param('code');
             const shortLinks = requireShortLinkService(services.shortLinks);
-            const originalParam = await shortLinks.resolveShortCode(code);
-            if (!originalParam) return c.text('Short URL not found', 404);
+            const queryString = await shortLinks.resolveShortCode(code);
+            if (!queryString) return c.text('Short URL not found', 404);
 
-            const url = new URL(c.req.url);
-            return c.redirect(`${url.origin}/${prefix}${originalParam}`);
+            const params = Object.fromEntries(new URLSearchParams(queryString));
+
+            let subscriptionUrl;
+            if (type === 'surge') {
+                const origin = new URL(c.req.url).origin;
+                subscriptionUrl = `${origin}/surge?${queryString}`;
+            }
+
+            return SHORT_LINK_HANDLERS[type](c, params, services, runtime, { subscriptionUrl });
         } catch (error) {
             return handleError(c, error, runtime.logger);
         }
     };
 
-    app.get('/s/:code', redirectHandler('surge'));
-    app.get('/b/:code', redirectHandler('singbox'));
-    app.get('/c/:code', redirectHandler('clash'));
-    app.get('/x/:code', redirectHandler('xray'));
+    app.get('/s/:code', shortLinkHandler('surge'));
+    app.get('/b/:code', shortLinkHandler('singbox'));
+    app.get('/c/:code', shortLinkHandler('clash'));
+    app.get('/x/:code', shortLinkHandler('xray'));
 
     app.post('/config', async (c) => {
         try {
@@ -569,4 +390,226 @@ function handleError(c, error, logger) {
     }
     logger.error?.('Unhandled error', error);
     return c.text(`Error: ${error.message}`, 500);
+}
+
+/**
+ * Shared sing-box config handler used by both the /singbox route and the
+ * /b/:code short link. `params` is a plain query params object (route side
+ * passes c.req.query(), short link side parses the stored queryString), so a
+ * client only ever touches the short code instead of a multi-KB redirect URL.
+ */
+async function handleSingboxRequest(c, params, services, runtime) {
+    try {
+        const config = params.config;
+        if (!config) {
+            return c.text('Missing config parameter', 400);
+        }
+
+        const selectedRules = parseSelectedRules(params.selectedRules);
+        const customRules = parseJsonArray(params.customRules);
+        const ua = params.ua || getRequestHeader(c.req, 'User-Agent') || DEFAULT_USER_AGENT;
+        const groupByCountry = parseBooleanFlag(params.group_by_country);
+        const includeAutoSelect = params.include_auto_select !== 'false';
+        const enableClashUI = parseBooleanFlag(params.enable_clash_ui);
+        const externalController = params.external_controller;
+        const externalUiDownloadUrl = params.external_ui_download_url;
+        const configId = params.configId;
+        // Short link requests have no query string, so the stored lang param
+        // would be lost to the middleware; prefer the explicit param.
+        const lang = params.lang || c.get('lang');
+
+        const requestedSingboxVersion = params.singbox_version || params.sb_version || params.sb_ver;
+        const requestUserAgent = getRequestHeader(c.req, 'User-Agent');
+        const singboxConfigVersion = resolveSingboxConfigVersion(requestedSingboxVersion, requestUserAgent);
+
+        let baseConfig = singboxConfigVersion === '1.11' ? SING_BOX_CONFIG_V1_11 : SING_BOX_CONFIG;
+        if (configId) {
+            const storage = requireConfigStorage(services.configStorage);
+            const storedConfig = await storage.getConfigById(configId);
+            if (storedConfig) {
+                baseConfig = storedConfig;
+            }
+        }
+
+        const builder = new SingboxConfigBuilder(
+            config,
+            selectedRules,
+            customRules,
+            baseConfig,
+            lang,
+            ua,
+            groupByCountry,
+            enableClashUI,
+            externalController,
+            externalUiDownloadUrl,
+            singboxConfigVersion,
+            includeAutoSelect
+        );
+        await builder.build();
+        const userinfo = builder.getSubscriptionUserinfo();
+        if (userinfo) {
+            c.header('subscription-userinfo', userinfo);
+        }
+        return c.json(builder.config);
+    } catch (error) {
+        return handleError(c, error, runtime.logger);
+    }
+}
+
+/**
+ * Shared Clash config handler used by both the /clash route and the
+ * /c/:code short link.
+ */
+async function handleClashRequest(c, params, services, runtime) {
+    try {
+        const config = params.config;
+        if (!config) {
+            return c.text('Missing config parameter', 400);
+        }
+
+        const selectedRules = parseSelectedRules(params.selectedRules);
+        const customRules = parseJsonArray(params.customRules);
+        const ua = params.ua || getRequestHeader(c.req, 'User-Agent') || DEFAULT_USER_AGENT;
+        const groupByCountry = parseBooleanFlag(params.group_by_country);
+        const includeAutoSelect = params.include_auto_select !== 'false';
+        const enableClashUI = parseBooleanFlag(params.enable_clash_ui);
+        const externalController = params.external_controller;
+        const externalUiDownloadUrl = params.external_ui_download_url;
+        const configId = params.configId;
+        const lang = params.lang || c.get('lang');
+
+        let baseConfig;
+        if (configId) {
+            const storage = requireConfigStorage(services.configStorage);
+            baseConfig = await storage.getConfigById(configId);
+        }
+
+        const builder = new ClashConfigBuilder(
+            config,
+            selectedRules,
+            customRules,
+            baseConfig,
+            lang,
+            ua,
+            groupByCountry,
+            enableClashUI,
+            externalController,
+            externalUiDownloadUrl,
+            includeAutoSelect
+        );
+        await builder.build();
+        const userinfo = builder.getSubscriptionUserinfo();
+        const headers = { 'Content-Type': 'text/yaml; charset=utf-8' };
+        if (userinfo) {
+            headers['subscription-userinfo'] = userinfo;
+        }
+        return c.text(builder.formatConfig(), 200, headers);
+    } catch (error) {
+        return handleError(c, error, runtime.logger);
+    }
+}
+
+/**
+ * Shared Surge config handler used by both the /surge route and the
+ * /s/:code short link. For short links the dispatcher rebuilds the canonical
+ * long /surge URL as the MANAGED-CONFIG target so Surge's periodic refresh
+ * keeps hitting a live endpoint.
+ */
+async function handleSurgeRequest(c, params, services, runtime, options = {}) {
+    try {
+        const config = params.config;
+        if (!config) {
+            return c.text('Missing config parameter', 400);
+        }
+
+        const selectedRules = parseSelectedRules(params.selectedRules);
+        const customRules = parseJsonArray(params.customRules);
+        const ua = params.ua || getRequestHeader(c.req, 'User-Agent') || DEFAULT_USER_AGENT;
+        const groupByCountry = parseBooleanFlag(params.group_by_country);
+        const includeAutoSelect = params.include_auto_select !== 'false';
+        const configId = params.configId;
+        const lang = params.lang || c.get('lang');
+
+        let baseConfig;
+        if (configId) {
+            const storage = requireConfigStorage(services.configStorage);
+            baseConfig = await storage.getConfigById(configId);
+        }
+
+        const builder = new SurgeConfigBuilder(
+            config,
+            selectedRules,
+            customRules,
+            baseConfig,
+            lang,
+            ua,
+            groupByCountry,
+            includeAutoSelect
+        );
+        builder.setSubscriptionUrl(options?.subscriptionUrl ?? c.req.url);
+        await builder.build();
+
+        const userinfo = builder.getSubscriptionUserinfo();
+        if (userinfo) {
+            c.header('subscription-userinfo', userinfo);
+        }
+        return c.text(builder.formatConfig());
+    } catch (error) {
+        return handleError(c, error, runtime.logger);
+    }
+}
+
+/**
+ * Shared Xray config handler used by both the /xray route and the
+ * /x/:code short link. Unlike the builders it fetches each HTTP(S) config
+ * line directly and base64-encodes the resulting node list.
+ */
+async function handleXrayRequest(c, params, services, runtime) {
+    const inputString = params.config;
+    if (!inputString) {
+        return c.text('Missing config parameter', 400);
+    }
+
+    const proxylist = inputString.split('\n');
+    const finalProxyList = [];
+    let subscriptionUserinfo;
+    const userAgent = params.ua || getRequestHeader(c.req, 'User-Agent') || DEFAULT_USER_AGENT;
+    const headers = { 'User-Agent': userAgent };
+
+    for (const proxy of proxylist) {
+        const trimmedProxy = proxy.trim();
+        if (!trimmedProxy) continue;
+
+        if (trimmedProxy.startsWith('http://') || trimmedProxy.startsWith('https://')) {
+            try {
+                const response = await fetch(trimmedProxy, { method: 'GET', headers });
+                const fetchedUserinfo = response.headers.get('subscription-userinfo');
+                if (fetchedUserinfo && subscriptionUserinfo === undefined) {
+                    subscriptionUserinfo = fetchedUserinfo;
+                }
+                const text = await response.text();
+                let processed = tryDecodeSubscriptionLines(text, { decodeUriComponent: true });
+                if (!Array.isArray(processed)) processed = [processed];
+                finalProxyList.push(...processed.filter(item => typeof item === 'string' && item.trim() !== ''));
+            } catch (e) {
+                runtime.logger.warn('Failed to fetch the proxy', e);
+            }
+        } else {
+            let processed = tryDecodeSubscriptionLines(trimmedProxy);
+            if (!Array.isArray(processed)) processed = [processed];
+            finalProxyList.push(...processed.filter(item => typeof item === 'string' && item.trim() !== ''));
+        }
+    }
+
+    const finalString = finalProxyList.join('\n');
+    if (!finalString) {
+        return c.text('Missing config parameter', 400);
+    }
+
+    const responseHeaders = {};
+    if (subscriptionUserinfo) {
+        responseHeaders['subscription-userinfo'] = subscriptionUserinfo;
+    }
+
+    return c.text(encodeBase64(finalString), 200, responseHeaders);
 }

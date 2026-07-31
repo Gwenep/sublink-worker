@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { createApp } from '../src/app/createApp.jsx';
 import { MemoryKVAdapter } from '../src/adapters/kv/memoryKv.js';
+import { decodeBase64 } from '../src/utils.js';
 
 const createTestApp = (overrides = {}) => {
     const runtime = {
@@ -113,5 +114,123 @@ proxy-groups:
         const text = await res.text();
         expect(text).toBeTruthy();
         expect(kvMock.put).toHaveBeenCalled();
+    });
+
+    // Short links now return config content directly instead of redirecting,
+    // so clients (e.g. Clash Verge) never have to follow a multi-KB URL.
+    describe('short links return config directly', () => {
+        const VMESS_CONFIG = 'vmess://ew0KICAidiI6ICIyIiwNCiAgInBzIjogInRlc3QiLA0KICAiYWRkIjogIjEuMS4xLjEiLA0KICAicG9ydCI6ICI0NDMiLA0KICAiaWQiOiAiYWRkNjY2NjYtODg4OC04ODg4LTg4ODgtODg4ODg4ODg4ODg4IiwNCiAgImFpZCI6ICIwIiwNCiAgInNjeSI6ICJhdXRvIiwNCiAgIm5ldCI6ICJ3cyIsDQogICJ0eXBlIjogIm5vbmUiLA0KICAiaG9zdCI6ICIiLA0KICAicGF0aCI6ICIvIiwNCiAgInRscyI6ICJ0bHMiDQp9';
+
+        it('GET /c/:code returns clash YAML with 200 instead of a redirect', async () => {
+            const kv = new MemoryKVAdapter();
+            const app = createTestApp({ kv });
+            // shorten-v2 stores parsedUrl.search, which includes the leading '?'
+            const queryString = `?config=${encodeURIComponent(VMESS_CONFIG)}`;
+            await kv.put('abc123', queryString);
+
+            const res = await app.request('http://localhost/c/abc123');
+            expect(res.status).toBe(200);
+            expect(res.headers.get('content-type')).toContain('text/yaml');
+            expect(res.headers.get('location')).toBeNull();
+            const text = await res.text();
+            expect(text).toContain('proxies:');
+        });
+
+        it('GET /b/:code returns singbox JSON', async () => {
+            const kv = new MemoryKVAdapter();
+            const app = createTestApp({ kv });
+            // shorten-v2 stores parsedUrl.search, which includes the leading '?'
+            const queryString = `?config=${encodeURIComponent(VMESS_CONFIG)}`;
+            await kv.put('abc123', queryString);
+
+            const res = await app.request('http://localhost/b/abc123');
+            expect(res.status).toBe(200);
+            expect(res.headers.get('content-type')).toContain('application/json');
+            const json = await res.json();
+            expect(json).toHaveProperty('outbounds');
+        });
+
+        it('GET /s/:code returns surge config text', async () => {
+            const kv = new MemoryKVAdapter();
+            const app = createTestApp({ kv });
+            // shorten-v2 stores parsedUrl.search, which includes the leading '?'
+            const queryString = `?config=${encodeURIComponent(VMESS_CONFIG)}`;
+            await kv.put('abc123', queryString);
+
+            const res = await app.request('http://localhost/s/abc123');
+            expect(res.status).toBe(200);
+            const text = await res.text();
+            expect(text).toContain('[Proxy]');
+            // Surge managed config should point at the canonical long URL
+            expect(text).toContain('#!MANAGED-CONFIG http://localhost/surge?');
+        });
+
+        it('GET /x/:code returns base64-encoded proxy list', async () => {
+            const kv = new MemoryKVAdapter();
+            const app = createTestApp({ kv });
+            // shorten-v2 stores parsedUrl.search, which includes the leading '?'
+            const queryString = `?config=${encodeURIComponent(VMESS_CONFIG)}`;
+            await kv.put('abc123', queryString);
+
+            const res = await app.request('http://localhost/x/abc123');
+            expect(res.status).toBe(200);
+            const body = await res.text();
+            const decoded = decodeBase64(body);
+            expect(decoded).toContain('vmess://');
+        });
+
+        it('GET /c/:code returns 404 for an unknown short code', async () => {
+            const app = createTestApp();
+            const res = await app.request('http://localhost/c/notexist');
+            expect(res.status).toBe(404);
+            const text = await res.text();
+            expect(text).toContain('Short URL not found');
+        });
+
+        it('short link honors stored lang param when no query string', async () => {
+            const kv = new MemoryKVAdapter();
+            const app = createTestApp({ kv });
+            // shorten-v2 stores parsedUrl.search, which includes the leading '?'
+            const queryString = `?config=${encodeURIComponent(VMESS_CONFIG)}&lang=en`;
+            await kv.put('abc123', queryString);
+
+            const res = await app.request('http://localhost/s/abc123');
+            expect(res.status).toBe(200);
+            const text = await res.text();
+            // English group names appear when lang=en is honored
+            expect(text).toContain('Node Select');
+        });
+
+        it('short link honors stored configId base config', async () => {
+            const kv = new MemoryKVAdapter();
+            const app = createTestApp({ kv });
+            const configId = 'clash_test123';
+            await kv.put(configId, JSON.stringify({
+                'mixed-port': 7890,
+                'allow-lan': true
+            }));
+            // shorten-v2 stores parsedUrl.search, which includes the leading '?'
+            const queryString = `?config=${encodeURIComponent(VMESS_CONFIG)}&configId=${configId}`;
+            await kv.put('abc123', queryString);
+
+            const res = await app.request('http://localhost/c/abc123');
+            expect(res.status).toBe(200);
+            const text = await res.text();
+            expect(text).toContain('mixed-port: 7890');
+        });
+
+        it('GET /resolve still returns the original long URL', async () => {
+            const kv = new MemoryKVAdapter();
+            const app = createTestApp({ kv });
+            // shorten-v2 stores parsedUrl.search, which includes the leading '?'
+            const queryString = `?config=${encodeURIComponent(VMESS_CONFIG)}`;
+            await kv.put('abc123', queryString);
+
+            const res = await app.request('http://localhost/resolve?url=' + encodeURIComponent('http://localhost/c/abc123'));
+            expect(res.status).toBe(200);
+            const data = await res.json();
+            expect(data.originalUrl).toContain('/clash?');
+            expect(data.originalUrl).toContain(encodeURIComponent(VMESS_CONFIG));
+        });
     });
 });
