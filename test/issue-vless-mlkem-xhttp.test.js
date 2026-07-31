@@ -96,6 +96,59 @@ describe('VLESS ML-KEM + xhttp conversion', () => {
   });
 });
 
+describe('VLESS alpn-based dedup', () => {
+  const TCP_URL =
+    'vless://00000000-0000-4000-8000-000000000001@203.0.113.10:443' +
+    '?security=tls&sni=cdn.example.com&insecure=0&type=xhttp&path=abc-xc&mode=auto' +
+    '#TCP-clone';
+  const UDP_URL =
+    'vless://00000000-0000-4000-8000-000000000001@203.0.113.10:443' +
+    '?security=tls&sni=cdn.example.com&alpn=h3&insecure=0&type=xhttp&path=abc-xc&mode=auto' +
+    '#UDP-clone';
+
+  it('parses alpn from share link', () => {
+    const parsed = parseVless(UDP_URL);
+    expect(parsed.alpn).toEqual(['h3']);
+    expect(parseVless(TCP_URL).alpn).toBeUndefined();
+  });
+
+  it('keeps both nodes when they differ only in alpn', () => {
+    const builder = Object.create(ClashConfigBuilder.prototype);
+    builder.config = { proxies: [] };
+    builder.addProxyToConfig(toClash(parseVless(TCP_URL)));
+    builder.addProxyToConfig(toClash(parseVless(UDP_URL)));
+    const names = builder.config.proxies.map(p => p.name);
+    expect(names).toContain('TCP-clone');
+    expect(names).toContain('UDP-clone');
+    expect(builder.config.proxies).toHaveLength(2);
+    // alpn is emitted on the Clash export so the nodes stay distinct
+    expect(builder.config.proxies.find(p => p.name === 'UDP-clone').alpn).toEqual(['h3']);
+  });
+});
+
+describe('VLESS packet_encoding preservation', () => {
+  it('parses packet_encoding and emits it on Clash export', () => {
+    const url =
+      'vless://00000000-0000-4000-8000-000000000001@203.0.113.10:443' +
+      '?security=tls&sni=cdn.example.com&type=xhttp&path=abc-xc&mode=auto&packet_encoding=xudp' +
+      '#xudp-node';
+    const parsed = parseVless(url);
+    expect(parsed.packet_encoding).toBe('xudp');
+    expect(toClash(parsed)['packet-encoding']).toBe('xudp');
+  });
+
+  it('keeps both nodes when they differ only in packet_encoding', () => {
+    const base =
+      'vless://00000000-0000-4000-8000-000000000001@203.0.113.10:443' +
+      '?security=tls&sni=cdn.example.com&type=xhttp&path=abc-xc&mode=auto';
+    const builder = Object.create(ClashConfigBuilder.prototype);
+    builder.config = { proxies: [] };
+    builder.addProxyToConfig(toClash(parseVless(base + '#normal-node')));
+    builder.addProxyToConfig(toClash(parseVless(base + '&packet_encoding=xudp#xudp-node')));
+    expect(builder.config.proxies).toHaveLength(2);
+  });
+});
+
 describe('TLS insecure flag parsing', () => {
   it('treats insecure=0 as skip-cert-verify false for TUIC', () => {
     const clash = toClash(parseTuic(TUIC_SECURE_URL));

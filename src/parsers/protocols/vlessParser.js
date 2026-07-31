@@ -1,4 +1,4 @@
-import { parseServerInfo, parseUrlParams, createTlsConfig, createTransportConfig, parseBool } from '../../utils.js';
+import { parseServerInfo, parseUrlParams, createTlsConfig, createTransportConfig, parseBool, parseArray } from '../../utils.js';
 
 export function parseVless(url) {
     const { addressPart, params, name } = parseUrlParams(url);
@@ -30,6 +30,15 @@ export function parseVless(url) {
         ? params.encryption
         : undefined;
 
+    // alpn must survive to the dedup layer: two nodes that differ only in alpn
+    // (e.g. one with alpn=h3 for UDP, one without for TCP) are otherwise seen
+    // as identical and the second one gets dropped.
+    const alpn = parseArray(params.alpn);
+
+    // packet_encoding (e.g. xudp) similarly distinguishes nodes and must be
+    // preserved for mihomo/xray; ClashConfigBuilder emits it as packet-encoding.
+    const packet_encoding = params.packet_encoding ?? params['packet-encoding'];
+
     return {
         type: 'vless',
         tag: name,
@@ -41,6 +50,8 @@ export function parseVless(url) {
         transport,
         flow: params.flow ?? undefined,
         ...(encryption ? { encryption } : {}),
+        ...(alpn ? { alpn } : {}),
+        ...(packet_encoding ? { packet_encoding } : {}),
         ...(udp !== undefined ? { udp } : {})
     };
 }
