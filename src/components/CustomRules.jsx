@@ -256,11 +256,28 @@ export const CustomRules = (props) => {
             jsonValid: false,
             
             init() {
+              // Restore saved rules from localStorage so users don't have to
+              // re-paste custom rules every visit (same pattern as formLogic).
+              const saved = localStorage.getItem('customRules');
+              if (saved) {
+                try {
+                  const parsed = JSON.parse(saved);
+                  if (Array.isArray(parsed)) {
+                    this.rules = parsed;
+                    this.jsonContent = JSON.stringify(parsed, null, 2);
+                  }
+                } catch (e) {
+                  // Ignore corrupted saved rules and start fresh
+                }
+              }
+
               // Watch for changes in rules to update JSON content
               this.$watch('rules', (value) => {
                 if (this.mode === 'form') {
                   this.jsonContent = JSON.stringify(value, null, 2);
                 }
+                // Persist rules on every change
+                localStorage.setItem('customRules', JSON.stringify(value));
               });
 
               // Watch for changes in JSON content to update rules
@@ -287,6 +304,7 @@ export const CustomRules = (props) => {
                 if (event.detail && Array.isArray(event.detail.rules)) {
                   this.rules = event.detail.rules;
                   this.jsonContent = JSON.stringify(event.detail.rules, null, 2);
+                  localStorage.setItem('customRules', JSON.stringify(event.detail.rules));
                   this.mode = 'json'; // Switch to JSON mode to show imported rules
                 }
               });
@@ -317,6 +335,7 @@ export const CustomRules = (props) => {
               }
               
               this.$dispatch('custom-rules-clear');
+              localStorage.removeItem('customRules');
               setTimeout(() => {
                 this.rules = [];
                 this.jsonContent = '[]';
