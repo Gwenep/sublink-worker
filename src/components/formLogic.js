@@ -297,6 +297,68 @@ export const formLogicFn = (t) => {
                 }
             },
 
+            // Save the base config as the single shared default so any device
+            // that loads the default sees this config.
+            async saveBaseConfigAsDefault() {
+                const content = (this.configEditor || '').trim();
+                if (!content) {
+                    alert(this.configContentRequiredText || window.APP_TRANSLATIONS.configContentRequired);
+                    return;
+                }
+
+                let payloadContent = this.configEditor;
+                if (this.configType === 'surge') {
+                    try {
+                        const { configObject } = parseSurgeConfigInput(this.configEditor);
+                        payloadContent = JSON.stringify(configObject);
+                    } catch (parseError) {
+                        const prefix = window.APP_TRANSLATIONS.configValidationError || 'Config validation error:';
+                        alert(`${prefix} ${parseError?.message || ''}`.trim());
+                        return;
+                    }
+                }
+
+                this.savingConfig = true;
+                try {
+                    const response = await fetch('/config/global', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            type: 'baseConfig',
+                            content: { type: this.configType, content: payloadContent }
+                        })
+                    });
+                    if (!response.ok) {
+                        throw new Error(responseText || response.statusText || 'Request failed');
+                    }
+                    const successMessage = window.APP_TRANSLATIONS.saveConfigSuccess || 'Configuration saved successfully!';
+                    alert(`${successMessage} (default)`);
+                } catch (error) {
+                    console.error('Failed to save default base config:', error);
+                    const errorPrefix = this.configSaveFailedText || window.APP_TRANSLATIONS.configSaveFailed || 'Failed to save configuration';
+                    alert(`${errorPrefix}: ${error?.message || 'Unknown error'}`);
+                } finally {
+                    this.savingConfig = false;
+                }
+            },
+
+            // Load the single shared default base config from the server.
+            async loadDefaultBaseConfig() {
+                try {
+                    const response = await fetch('/config/global?type=baseConfig');
+                    const data = await response.json();
+                    if (data && data.found && data.content && data.content.type) {
+                        this.configType = data.content.type;
+                        this.configEditor = data.content.content || '';
+                        this.resetConfigValidation();
+                    } else {
+                        alert(window.APP_TRANSLATIONS.noDefaultConfig || 'No default config saved');
+                    }
+                } catch (error) {
+                    console.error('Failed to load default base config:', error);
+                }
+            },
+
             validateBaseConfig() {
                 const content = (this.configEditor || '').trim();
                 if (!content) {
@@ -366,8 +428,12 @@ export const formLogicFn = (t) => {
                 this.loading = true;
                 this.shortenedLinks = null; // Reset shortened links when generating new links
                 try {
-                    // Get custom rules from the child component via the hidden input
+                    // Get custom rules from the child component via the hidden input.
+                    // Prefer the saved KV id when present (shorter URL); fall back
+                    // to the inline JSON for old links.
                     const customRulesInput = document.querySelector('input[name="customRules"]');
+                    const customRulesIdInput = document.querySelector('input[name="customRulesId"]');
+                    const customRulesId = customRulesIdInput && customRulesIdInput.value;
                     const customRules = customRulesInput && customRulesInput.value ? JSON.parse(customRulesInput.value) : [];
 
                     // Construct URLs
@@ -376,7 +442,11 @@ export const formLogicFn = (t) => {
                     params.append('config', this.input);
                     params.append('ua', this.customUA);
                     params.append('selectedRules', JSON.stringify(this.selectedRules));
-                    params.append('customRules', JSON.stringify(customRules));
+                    if (customRulesId) {
+                        params.append('customRulesId', customRulesId);
+                    } else {
+                        params.append('customRules', JSON.stringify(customRules));
+                    }
 
                     if (this.groupByCountry) params.append('group_by_country', 'true');
                     if (!this.includeAutoSelect) params.append('include_auto_select', 'false');

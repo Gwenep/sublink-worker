@@ -13,7 +13,7 @@ import { createTranslator, resolveLanguage } from '../i18n/index.js';
 import { encodeBase64, tryDecodeSubscriptionLines } from '../utils.js';
 import { APP_NAME, APP_SUBTITLE } from '../constants.js';
 import { ShortLinkService } from '../services/shortLinkService.js';
-import { ConfigStorageService } from '../services/configStorageService.js';
+import { ConfigStorageService, GLOBAL_CONFIG_KEYS } from '../services/configStorageService.js';
 import { ServiceError, MissingDependencyError } from '../services/errors.js';
 import { normalizeRuntime } from '../runtime/runtimeConfig.js';
 import { PREDEFINED_RULE_SETS, SING_BOX_CONFIG, SING_BOX_CONFIG_V1_11, generateSubconverterConfig } from '../config/index.js';
@@ -186,6 +186,42 @@ export function createApp(bindings = {}) {
         }
     });
 
+    // Single shared ("default") config: POST saves the global copy under a
+    // fixed key, GET reads it back. Every visitor sees the same default.
+    app.post('/config/global', async (c) => {
+        try {
+            const { type, content } = await c.req.json();
+            if (!GLOBAL_CONFIG_KEYS[type]) {
+                return c.text('Invalid type', 400);
+            }
+            const storage = requireConfigStorage(services.configStorage);
+            const key = await storage.saveConfig(type, content, { key: GLOBAL_CONFIG_KEYS[type] });
+            return c.text(key);
+        } catch (error) {
+            if (error instanceof SyntaxError) {
+                return c.text(`Invalid format: ${error.message}`, 400);
+            }
+            return handleError(c, error, runtime.logger);
+        }
+    });
+
+    app.get('/config/global', async (c) => {
+        try {
+            const type = c.req.query('type');
+            if (!GLOBAL_CONFIG_KEYS[type]) {
+                return c.text('Invalid type', 400);
+            }
+            const storage = requireConfigStorage(services.configStorage);
+            const stored = await storage.getGlobalConfig(type);
+            if (!stored) {
+                return c.json({ found: false });
+            }
+            return c.json({ found: true, content: stored });
+        } catch (error) {
+            return handleError(c, error, runtime.logger);
+        }
+    });
+
     app.get('/resolve', async (c) => {
         try {
             const shortUrl = c.req.query('url');
@@ -260,6 +296,21 @@ function parseJsonArray(raw) {
     } catch {
         return [];
     }
+}
+
+/**
+ * Resolve custom rules from either the inline `customRules` JSON param or,
+ * when absent, from a saved KV blob referenced by `customRulesId`. The inline
+ * param wins so old links keep working; KV is a fallback for shorter URLs.
+ */
+async function resolveCustomRules(params, services) {
+    const inline = parseJsonArray(params.customRules);
+    if (inline.length > 0 || !params.customRulesId) {
+        return inline;
+    }
+    const storage = requireConfigStorage(services.configStorage);
+    const stored = await storage.getConfigById(params.customRulesId);
+    return Array.isArray(stored) ? stored : [];
 }
 
 function parseBooleanFlag(value) {
@@ -406,7 +457,7 @@ async function handleSingboxRequest(c, params, services, runtime) {
         }
 
         const selectedRules = parseSelectedRules(params.selectedRules);
-        const customRules = parseJsonArray(params.customRules);
+        const customRules = await resolveCustomRules(params, services);
         const ua = params.ua || getRequestHeader(c.req, 'User-Agent') || DEFAULT_USER_AGENT;
         const groupByCountry = parseBooleanFlag(params.group_by_country);
         const includeAutoSelect = params.include_auto_select !== 'false';
@@ -468,7 +519,7 @@ async function handleClashRequest(c, params, services, runtime) {
         }
 
         const selectedRules = parseSelectedRules(params.selectedRules);
-        const customRules = parseJsonArray(params.customRules);
+        const customRules = await resolveCustomRules(params, services);
         const ua = params.ua || getRequestHeader(c.req, 'User-Agent') || DEFAULT_USER_AGENT;
         const groupByCountry = parseBooleanFlag(params.group_by_country);
         const includeAutoSelect = params.include_auto_select !== 'false';
@@ -523,7 +574,7 @@ async function handleSurgeRequest(c, params, services, runtime, options = {}) {
         }
 
         const selectedRules = parseSelectedRules(params.selectedRules);
-        const customRules = parseJsonArray(params.customRules);
+        const customRules = await resolveCustomRules(params, services);
         const ua = params.ua || getRequestHeader(c.req, 'User-Agent') || DEFAULT_USER_AGENT;
         const groupByCountry = parseBooleanFlag(params.group_by_country);
         const includeAutoSelect = params.include_auto_select !== 'false';

@@ -24,7 +24,9 @@
  */
 
 const DEFAULTS = {
-    configTtlSeconds: 60 * 60 * 24 * 30
+    // 0 means no TTL: saved base configs never expire by default. A deployment
+    // can still opt into expiration via CONFIG_TTL_SECONDS.
+    configTtlSeconds: 0
 };
 
 /**

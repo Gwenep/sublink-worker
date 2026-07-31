@@ -233,4 +233,92 @@ proxy-groups:
             expect(data.originalUrl).toContain(encodeURIComponent(VMESS_CONFIG));
         });
     });
+
+    describe('custom rules KV persistence', () => {
+        it('saves customRules via /config and consumes via customRulesId', async () => {
+            const kv = new MemoryKVAdapter();
+            const app = createTestApp({ kv });
+            const config = 'vmess://ew0KICAidiI6ICIyIiwNCiAgInBzIjogInRlc3QiLA0KICAiYWRkIjogIjEuMS4xLjEiLA0KICAicG9ydCI6ICI0NDMiLA0KICAiaWQiOiAiYWRkNjY2NjYtODg4OC04ODg4LTg4ODgtODg4ODg4ODg4ODg4IiwNCiAgImFpZCI6ICIwIiwNCiAgInNjeSI6ICJhdXRvIiwNCiAgIm5ldCI6ICJ3cyIsDQogICJ0eXBlIjogIm5vbmUiLA0KICAiaG9zdCI6ICIiLA0KICAicGF0aCI6ICIvIiwNCiAgInRscyI6ICJ0bHMiDQp9';
+
+            // Save custom rules to KV
+            const rules = [{ name: 'LAN', src_ip_cidr: '192.168.1.13/32' }];
+            const saveRes = await app.request('http://localhost/config', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ type: 'customRules', content: rules })
+            });
+            const id = (await saveRes.text()).trim();
+            expect(saveRes.status).toBe(200);
+            expect(id).toContain('customRules_');
+
+            // Consume via customRulesId instead of inline JSON
+            const res = await app.request(
+                `http://localhost/clash?config=${encodeURIComponent(config)}&customRulesId=${encodeURIComponent(id)}`
+            );
+            expect(res.status).toBe(200);
+            const text = await res.text();
+            expect(text).toContain('LAN');
+        });
+
+        it('falls back to inline customRules when no customRulesId present', async () => {
+            const app = createTestApp();
+            const config = 'vmess://ew0KICAidiI6ICIyIiwNCiAgInBzIjogInRlc3QiLA0KICAiYWRkIjogIjEuMS4xLjEiLA0KICAicG9ydCI6ICI0NDMiLA0KICAiaWQiOiAiYWRkNjY2NjYtODg4OC04ODg4LTg4ODgtODg4ODg4ODg4ODg4IiwNCiAgImFpZCI6ICIwIiwNCiAgInNjeSI6ICJhdXRvIiwNCiAgIm5ldCI6ICJ3cyIsDQogICJ0eXBlIjogIm5vbmUiLA0KICAiaG9zdCI6ICIiLA0KICAicGF0aCI6ICIvIiwNCiAgInRscyI6ICJ0bHMiDQp9';
+            const rules = JSON.stringify([{ name: 'Custom', domain_suffix: 'example.com' }]);
+            const res = await app.request(`http://localhost/clash?config=${encodeURIComponent(config)}&customRules=${encodeURIComponent(rules)}`);
+            expect(res.status).toBe(200);
+            const text = await res.text();
+            expect(text).toContain('Custom');
+        });
+    });
+
+    describe('global default config', () => {
+        it('saves and reads customRules under the fixed global key', async () => {
+            const kv = new MemoryKVAdapter();
+            const app = createTestApp({ kv });
+            const rules = [{ name: 'LAN', src_ip_cidr: '192.168.1.13/32' }];
+            const save = await app.request('http://localhost/config/global', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ type: 'customRules', content: rules })
+            });
+            expect(save.status).toBe(200);
+            expect((await save.text()).trim()).toBe('global_custom_rules');
+
+            const get = await app.request('http://localhost/config/global?type=customRules');
+            const data = await get.json();
+            expect(data.found).toBe(true);
+            expect(data.content).toEqual(rules);
+        });
+
+        it('saves and reads baseConfig with type wrapping', async () => {
+            const kv = new MemoryKVAdapter();
+            const app = createTestApp({ kv });
+            const body = { type: 'baseConfig', content: { type: 'clash', content: 'port: 7890\n' } };
+            const save = await app.request('http://localhost/config/global', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body)
+            });
+            expect(save.status).toBe(200);
+
+            const get = await app.request('http://localhost/config/global?type=baseConfig');
+            const data = await get.json();
+            expect(data.found).toBe(true);
+            expect(data.content.type).toBe('clash');
+            expect(data.content.content).toContain('port: 7890');
+        });
+
+        it('returns found:false when nothing saved yet', async () => {
+            const app = createTestApp();
+            const get = await app.request('http://localhost/config/global?type=customRules');
+            const data = await get.json();
+            expect(data.found).toBe(false);
+        });
+
+        it('rejects an unknown global type', async () => {
+            const app = createTestApp();
+            const get = await app.request('http://localhost/config/global?type=nope');
+            expect(get.status).toBe(400);
+        });
+    });
 });

@@ -205,6 +205,25 @@ export const CustomRules = (props) => {
     <i class="fas fa-trash"></i>
 { t('clearAll') }
           </button>
+          <button type="button" x-on:click="saveRules()" x-show="rules.length > 0" class="px-4 py-2 bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 rounded-lg hover:bg-blue-100 dark:hover:bg-blue-900/40 transition-colors duration-200 font-medium flex items-center gap-2" x-bind:disabled="savingRules">
+            <i class="fas fa-cloud-upload-alt"></i>
+            <span x-text="savingRules ? 'Saving...' : 'Save to server'"></span>
+          </button>
+          <button type="button" x-on:click="clearSavedRules()" x-show="customRulesId" class="px-4 py-2 bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors duration-200 font-medium flex items-center gap-2">
+            <i class="fas fa-ban"></i>
+            Clear saved
+          </button>
+          <button type="button" x-on:click="saveAsDefault()" x-show="rules.length > 0" class="px-4 py-2 bg-green-50 dark:bg-green-900/20 text-green-600 dark:text-green-400 rounded-lg hover:bg-green-100 dark:hover:bg-green-900/40 transition-colors duration-200 font-medium flex items-center gap-2" x-bind:disabled="savingRules">
+            <i class="fas fa-globe"></i>
+            Save as Default
+          </button>
+          <button type="button" x-on:click="loadDefault()" class="px-4 py-2 bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors duration-200 font-medium flex items-center gap-2">
+            <i class="fas fa-download"></i>
+            Load Default
+          </button>
+          <template x-if="saveError">
+            <span class="text-sm text-gray-500 dark:text-gray-400 px-2 py-2" x-text="saveError"></span>
+          </template>
         </div>
       </div>
 
@@ -244,6 +263,7 @@ export const CustomRules = (props) => {
 
     {/* Hidden input to store the final JSON for form submission */ }
     <input type="hidden" name="customRules" x-bind:value="JSON.stringify(rules)" />
+    <input type="hidden" name="customRulesId" x-bind:value="customRulesId" />
 
         <script dangerouslySetInnerHTML={{
             __html: `
@@ -254,7 +274,10 @@ export const CustomRules = (props) => {
             jsonContent: '[]',
             jsonError: null,
             jsonValid: false,
-            
+            customRulesId: localStorage.getItem('customRulesId') || '',
+            saveError: null,
+            savingRules: false,
+
             init() {
               // Restore saved rules from localStorage so users don't have to
               // re-paste custom rules every visit (same pattern as formLogic).
@@ -355,6 +378,83 @@ export const CustomRules = (props) => {
                 }
               } catch (e) {
                 this.jsonError = e.message;
+              }
+            },
+
+            async saveRules() {
+              if (this.rules.length === 0) {
+                this.saveError = 'No rules to save';
+                return;
+              }
+              this.savingRules = true;
+              this.saveError = null;
+              try {
+                const response = await fetch('/config', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ type: 'customRules', content: this.rules })
+                });
+                const id = (await response.text()).trim();
+                if (!response.ok || !id) {
+                  throw new Error(id || 'Save failed');
+                }
+                this.customRulesId = id;
+                localStorage.setItem('customRulesId', id);
+                this.saveError = 'Saved: ' + id;
+              } catch (e) {
+                this.saveError = e.message || 'Save failed';
+              } finally {
+                this.savingRules = false;
+              }
+            },
+
+            clearSavedRules() {
+              localStorage.removeItem('customRulesId');
+              this.customRulesId = '';
+              this.saveError = null;
+            },
+
+            // Save rules as the single shared default so any device that loads
+            // the default sees these rules.
+            async saveAsDefault() {
+              if (this.rules.length === 0) {
+                this.saveError = 'No rules to save';
+                return;
+              }
+              this.savingRules = true;
+              this.saveError = null;
+              try {
+                const response = await fetch('/config/global', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ type: 'customRules', content: this.rules })
+                });
+                if (!response.ok) {
+                  throw new Error('Save failed');
+                }
+                this.saveError = 'Saved as default';
+              } catch (e) {
+                this.saveError = e.message || 'Save failed';
+              } finally {
+                this.savingRules = false;
+              }
+            },
+
+            // Load the single shared default rules from the server.
+            async loadDefault() {
+              this.saveError = null;
+              try {
+                const response = await fetch('/config/global?type=customRules');
+                const data = await response.json();
+                if (data && data.found && Array.isArray(data.content)) {
+                  this.rules = data.content;
+                  this.jsonContent = JSON.stringify(data.content, null, 2);
+                  this.saveError = 'Loaded default rules';
+                } else {
+                  this.saveError = 'No default rules saved';
+                }
+              } catch (e) {
+                this.saveError = e.message || 'Load failed';
               }
             }
           }
