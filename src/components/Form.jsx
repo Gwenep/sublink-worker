@@ -36,7 +36,8 @@ export const Form = (props) => {
     customShortCodePlaceholder: t('customShortCodePlaceholder'),
     showFullLinks: t('showFullLinks'),
     saveAsDefault: t('saveAsDefault'),
-    loadDefault: t('loadDefault')
+    loadDefault: t('loadDefault'),
+    clearSaved: t('clearSaved')
   };
 
   const scriptContent = `
