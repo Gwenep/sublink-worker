@@ -112,6 +112,8 @@ export const formLogicFn = (t) => {
             shortenLinksText: '',
             shorteningText: '',
             showFullLinksText: '',
+            saveAsDefaultText: '',
+            loadDefaultText: '',
 
             init() {
                 // Load translations
@@ -125,6 +127,8 @@ export const formLogicFn = (t) => {
                     this.savingConfigText = window.APP_TRANSLATIONS.savingConfig;
                     this.configContentRequiredText = window.APP_TRANSLATIONS.configContentRequired;
                     this.configSaveFailedText = window.APP_TRANSLATIONS.configSaveFailed;
+                    this.saveAsDefaultText = window.APP_TRANSLATIONS.saveAsDefault;
+                    this.loadDefaultText = window.APP_TRANSLATIONS.loadDefault;
                 }
 
                 // Load saved data
@@ -329,7 +333,8 @@ export const formLogicFn = (t) => {
                         })
                     });
                     if (!response.ok) {
-                        throw new Error(responseText || response.statusText || 'Request failed');
+                        const errText = await response.text().catch(() => 'Request failed');
+                        throw new Error(errText);
                     }
                     const successMessage = window.APP_TRANSLATIONS.saveConfigSuccess || 'Configuration saved successfully!';
                     alert(`${successMessage} (default)`);

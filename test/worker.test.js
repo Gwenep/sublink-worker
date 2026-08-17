@@ -320,5 +320,64 @@ proxy-groups:
             const get = await app.request('http://localhost/config/global?type=nope');
             expect(get.status).toBe(400);
         });
+
+        it('applies global customRules as fallback when no inline rules or id', async () => {
+            const kv = new MemoryKVAdapter();
+            const app = createTestApp({ kv });
+            const config = 'vmess://ew0KICAidiI6ICIyIiwNCiAgInBzIjogInRlc3QiLA0KICAiYWRkIjogIjEuMS4xLjEiLA0KICAicG9ydCI6ICI0NDMiLA0KICAiaWQiOiAiYWRkNjY2NjYtODg4OC04ODg4LTg4ODgtODg4ODg4ODg4ODg4IiwNCiAgImFpZCI6ICIwIiwNCiAgInNjeSI6ICJhdXRvIiwNCiAgIm5ldCI6ICJ3cyIsDQogICJ0eXBlIjogIm5vbmUiLA0KICAiaG9zdCI6ICIiLA0KICAicGF0aCI6ICIvIiwNCiAgInRscyI6ICJ0bHMiDQp9';
+
+            // Save global default rules
+            const save = await app.request('http://localhost/config/global', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ type: 'customRules', content: [{ name: 'GlobalRule', domain_suffix: 'example.com' }] })
+            });
+            expect(save.status).toBe(200);
+
+            // No inline customRules and no customRulesId -> global default kicks in
+            const res = await app.request(`http://localhost/clash?config=${encodeURIComponent(config)}`);
+            expect(res.status).toBe(200);
+            const text = await res.text();
+            expect(text).toContain('GlobalRule');
+        });
+
+        it('applies global baseConfig when type matches and no configId', async () => {
+            const kv = new MemoryKVAdapter();
+            const app = createTestApp({ kv });
+            const config = 'vmess://ew0KICAidiI6ICIyIiwNCiAgInBzIjogInRlc3QiLA0KICAiYWRkIjogIjEuMS4xLjEiLA0KICAicG9ydCI6ICI0NDMiLA0KICAiaWQiOiAiYWRkNjY2NjYtODg4OC04ODg4LTg4ODgtODg4ODg4ODg4ODg4IiwNCiAgImFpZCI6ICIwIiwNCiAgInNjeSI6ICJhdXRvIiwNCiAgIm5ldCI6ICJ3cyIsDQogICJ0eXBlIjogIm5vbmUiLA0KICAiaG9zdCI6ICIiLA0KICAicGF0aCI6ICIvIiwNCiAgInRscyI6ICJ0bHMiDQp9';
+
+            // Save a global clash base config with a distinctive marker
+            const save = await app.request('http://localhost/config/global', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ type: 'baseConfig', content: { type: 'clash', content: 'port: 7890\nallow-lan: true\n' } })
+            });
+            expect(save.status).toBe(200);
+
+            const res = await app.request(`http://localhost/clash?config=${encodeURIComponent(config)}`);
+            expect(res.status).toBe(200);
+            const text = await res.text();
+            expect(text).toContain('allow-lan: true');
+        });
+
+        it('ignores global baseConfig of a different type', async () => {
+            const kv = new MemoryKVAdapter();
+            const app = createTestApp({ kv });
+            const config = 'vmess://ew0KICAidiI6ICIyIiwNCiAgInBzIjogInRlc3QiLA0KICAiYWRkIjogIjEuMS4xLjEiLA0KICAicG9ydCI6ICI0NDMiLA0KICAiaWQiOiAiYWRkNjY2NjYtODg4OC04ODg4LTg4ODgtODg4ODg4ODg4ODg4IiwNCiAgImFpZCI6ICIwIiwNCiAgInNjeSI6ICJhdXRvIiwNCiAgIm5ldCI6ICJ3cyIsDQogICJ0eXBlIjogIm5vbmUiLA0KICAiaG9zdCI6ICIiLA0KICAicGF0aCI6ICIvIiwNCiAgInRscyI6ICJ0bHMiDQp9';
+
+            // Save a global base config for surge only
+            await app.request('http://localhost/config/global', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ type: 'baseConfig', content: { type: 'surge', content: '[General]\n' } })
+            });
+
+            // Clash request must not pick up the surge global config
+            const res = await app.request(`http://localhost/clash?config=${encodeURIComponent(config)}`);
+            expect(res.status).toBe(200);
+            const text = await res.text();
+            expect(text).toContain('allow-lan');
+            expect(text).not.toMatch(/\[General\]/);
+        });
     });
 });

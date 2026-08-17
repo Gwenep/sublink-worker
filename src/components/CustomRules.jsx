@@ -207,19 +207,19 @@ export const CustomRules = (props) => {
           </button>
           <button type="button" x-on:click="saveRules()" x-show="rules.length > 0" class="px-4 py-2 bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 rounded-lg hover:bg-blue-100 dark:hover:bg-blue-900/40 transition-colors duration-200 font-medium flex items-center gap-2" x-bind:disabled="savingRules">
             <i class="fas fa-cloud-upload-alt"></i>
-            <span x-text="savingRules ? 'Saving...' : 'Save to server'"></span>
+            <span x-text="savingRules ? savingRulesText : saveRulesText">{t('saveConfig')}</span>
           </button>
           <button type="button" x-on:click="clearSavedRules()" x-show="customRulesId" class="px-4 py-2 bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors duration-200 font-medium flex items-center gap-2">
             <i class="fas fa-ban"></i>
-            Clear saved
+            <span x-text="clearSavedText">{t('clearSaved')}</span>
           </button>
           <button type="button" x-on:click="saveAsDefault()" x-show="rules.length > 0" class="px-4 py-2 bg-green-50 dark:bg-green-900/20 text-green-600 dark:text-green-400 rounded-lg hover:bg-green-100 dark:hover:bg-green-900/40 transition-colors duration-200 font-medium flex items-center gap-2" x-bind:disabled="savingRules">
             <i class="fas fa-globe"></i>
-            Save as Default
+            <span x-text="saveAsDefaultRulesText">{t('saveAsDefault')}</span>
           </button>
           <button type="button" x-on:click="loadDefault()" class="px-4 py-2 bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors duration-200 font-medium flex items-center gap-2">
             <i class="fas fa-download"></i>
-            Load Default
+            <span x-text="loadDefaultRulesText">{t('loadDefault')}</span>
           </button>
           <template x-if="saveError">
             <span class="text-sm text-gray-500 dark:text-gray-400 px-2 py-2" x-text="saveError"></span>
@@ -277,8 +277,20 @@ export const CustomRules = (props) => {
             customRulesId: localStorage.getItem('customRulesId') || '',
             saveError: null,
             savingRules: false,
+            saveRulesText: '',
+            savingRulesText: '',
+            clearSavedText: '',
+            saveAsDefaultRulesText: '',
+            loadDefaultRulesText: '',
 
             init() {
+              // Restore translated labels
+              this.saveRulesText = window.APP_TRANSLATIONS?.saveConfig || 'Save Config';
+              this.savingRulesText = window.APP_TRANSLATIONS?.savingConfig || 'Saving...';
+              this.clearSavedText = window.APP_TRANSLATIONS?.clearSaved || 'Clear saved';
+              this.saveAsDefaultRulesText = window.APP_TRANSLATIONS?.saveAsDefault || 'Save as Default';
+              this.loadDefaultRulesText = window.APP_TRANSLATIONS?.loadDefault || 'Load Default';
+
               // Restore saved rules from localStorage so users don't have to
               // re-paste custom rules every visit (same pattern as formLogic).
               const saved = localStorage.getItem('customRules');

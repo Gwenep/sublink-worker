@@ -34,7 +34,9 @@ export const Form = (props) => {
     customShortCode: t('customShortCode'),
     optional: t('optional'),
     customShortCodePlaceholder: t('customShortCodePlaceholder'),
-    showFullLinks: t('showFullLinks')
+    showFullLinks: t('showFullLinks'),
+    saveAsDefault: t('saveAsDefault'),
+    loadDefault: t('loadDefault')
   };
 
   const scriptContent = `
@@ -300,11 +302,11 @@ export const Form = (props) => {
               </button>
               <button type="button" x-on:click="saveBaseConfigAsDefault()" x-bind:disabled="savingConfig" class="px-4 py-2 bg-green-50 dark:bg-green-900/20 text-green-600 dark:text-green-400 rounded-lg hover:bg-green-100 dark:hover:bg-green-900/40 transition-colors font-medium text-sm disabled:opacity-70 disabled:cursor-not-allowed flex items-center gap-2">
                 <i class="fas fa-globe"></i>
-                Save as Default
+                <span x-text="saveAsDefaultText">{t('saveAsDefault')}</span>
               </button>
               <button type="button" x-on:click="loadDefaultBaseConfig()" class="px-4 py-2 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors font-medium text-sm flex items-center gap-2">
                 <i class="fas fa-download"></i>
-                Load Default
+                <span x-text="loadDefaultText">{t('loadDefault')}</span>
               </button>
               <button type="button" x-on:click="clearBaseConfig()" class="px-4 py-2 bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 rounded-lg hover:bg-red-100 dark:hover:bg-red-900/40 transition-colors font-medium text-sm" >
   { t('clearConfig') }

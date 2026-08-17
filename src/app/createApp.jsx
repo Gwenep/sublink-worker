@@ -10,13 +10,14 @@ import { SingboxConfigBuilder } from '../builders/SingboxConfigBuilder.js';
 import { ClashConfigBuilder } from '../builders/ClashConfigBuilder.js';
 import { SurgeConfigBuilder } from '../builders/SurgeConfigBuilder.js';
 import { createTranslator, resolveLanguage } from '../i18n/index.js';
+import yaml from 'js-yaml';
 import { encodeBase64, tryDecodeSubscriptionLines } from '../utils.js';
 import { APP_NAME, APP_SUBTITLE } from '../constants.js';
 import { ShortLinkService } from '../services/shortLinkService.js';
 import { ConfigStorageService, GLOBAL_CONFIG_KEYS } from '../services/configStorageService.js';
 import { ServiceError, MissingDependencyError } from '../services/errors.js';
 import { normalizeRuntime } from '../runtime/runtimeConfig.js';
-import { PREDEFINED_RULE_SETS, SING_BOX_CONFIG, SING_BOX_CONFIG_V1_11, generateSubconverterConfig } from '../config/index.js';
+import { PREDEFINED_RULE_SETS, CLASH_CONFIG, SURGE_CONFIG, SING_BOX_CONFIG, SING_BOX_CONFIG_V1_11, generateSubconverterConfig } from '../config/index.js';
 
 const DEFAULT_USER_AGENT = 'curl/7.74.0';
 
@@ -302,15 +303,76 @@ function parseJsonArray(raw) {
  * Resolve custom rules from either the inline `customRules` JSON param or,
  * when absent, from a saved KV blob referenced by `customRulesId`. The inline
  * param wins so old links keep working; KV is a fallback for shorter URLs.
+ * When neither is present, fall back to the shared global default rules so a
+ * "Save as Default" makes every generated link use them automatically.
  */
 async function resolveCustomRules(params, services) {
     const inline = parseJsonArray(params.customRules);
-    if (inline.length > 0 || !params.customRulesId) {
+    if (inline.length > 0) {
         return inline;
     }
-    const storage = requireConfigStorage(services.configStorage);
-    const stored = await storage.getConfigById(params.customRulesId);
-    return Array.isArray(stored) ? stored : [];
+    if (params.customRulesId) {
+        const storage = requireConfigStorage(services.configStorage);
+        const stored = await storage.getConfigById(params.customRulesId);
+        if (Array.isArray(stored)) {
+            return stored;
+        }
+    }
+    return resolveGlobalRules(services);
+}
+
+/**
+ * Read the shared global default custom rules (global_custom_rules key). Used
+ * as a fallback when a request carries no inline rules and no saved rules id.
+ */
+async function resolveGlobalRules(services) {
+    if (!services.configStorage) return [];
+    try {
+        const stored = await services.configStorage.getGlobalConfig('customRules');
+        return Array.isArray(stored) ? stored : [];
+    } catch {
+        return [];
+    }
+}
+
+/**
+ * Resolve the base config for a conversion: an explicit per-link configId wins;
+ * otherwise fall back to the shared global default base config when its type
+ * matches the requested client type, so a "Save as Default" on the UI applies
+ * to every generated link without requiring a configId param.
+ */
+async function resolveBaseConfig(params, services, requestedType, builtInFallback) {
+    if (params.configId) {
+        const storage = requireConfigStorage(services.configStorage);
+        const stored = await storage.getConfigById(params.configId);
+        if (stored) return stored;
+    }
+    if (services.configStorage) {
+        try {
+            const global = await services.configStorage.getGlobalConfig('baseConfig');
+            if (global && global.type === requestedType) {
+                return parseSerializedConfig(global.content, requestedType);
+            }
+        } catch {
+            // Ignore and fall through to the built-in default.
+        }
+    }
+    return builtInFallback;
+}
+
+/**
+ * Deserialize a stored base config to the object shape the builders expect.
+ * Clash content is saved as YAML text and needs to be loaded; sing-box/surge
+ * are already JSON objects.
+ */
+function parseSerializedConfig(content, requestedType) {
+    if (typeof content !== 'string') {
+        return typeof content === 'object' ? content : null;
+    }
+    if (requestedType === 'clash') {
+        return yaml.load(content);
+    }
+    return JSON.parse(content);
 }
 
 function parseBooleanFlag(value) {
@@ -464,7 +526,6 @@ async function handleSingboxRequest(c, params, services, runtime) {
         const enableClashUI = parseBooleanFlag(params.enable_clash_ui);
         const externalController = params.external_controller;
         const externalUiDownloadUrl = params.external_ui_download_url;
-        const configId = params.configId;
         // Short link requests have no query string, so the stored lang param
         // would be lost to the middleware; prefer the explicit param.
         const lang = params.lang || c.get('lang');
@@ -473,14 +534,8 @@ async function handleSingboxRequest(c, params, services, runtime) {
         const requestUserAgent = getRequestHeader(c.req, 'User-Agent');
         const singboxConfigVersion = resolveSingboxConfigVersion(requestedSingboxVersion, requestUserAgent);
 
-        let baseConfig = singboxConfigVersion === '1.11' ? SING_BOX_CONFIG_V1_11 : SING_BOX_CONFIG;
-        if (configId) {
-            const storage = requireConfigStorage(services.configStorage);
-            const storedConfig = await storage.getConfigById(configId);
-            if (storedConfig) {
-                baseConfig = storedConfig;
-            }
-        }
+        const builtIn = singboxConfigVersion === '1.11' ? SING_BOX_CONFIG_V1_11 : SING_BOX_CONFIG;
+        const baseConfig = await resolveBaseConfig(params, services, 'singbox', builtIn);
 
         const builder = new SingboxConfigBuilder(
             config,
@@ -526,14 +581,9 @@ async function handleClashRequest(c, params, services, runtime) {
         const enableClashUI = parseBooleanFlag(params.enable_clash_ui);
         const externalController = params.external_controller;
         const externalUiDownloadUrl = params.external_ui_download_url;
-        const configId = params.configId;
         const lang = params.lang || c.get('lang');
 
-        let baseConfig;
-        if (configId) {
-            const storage = requireConfigStorage(services.configStorage);
-            baseConfig = await storage.getConfigById(configId);
-        }
+        const baseConfig = await resolveBaseConfig(params, services, 'clash', CLASH_CONFIG);
 
         const builder = new ClashConfigBuilder(
             config,
@@ -578,14 +628,9 @@ async function handleSurgeRequest(c, params, services, runtime, options = {}) {
         const ua = params.ua || getRequestHeader(c.req, 'User-Agent') || DEFAULT_USER_AGENT;
         const groupByCountry = parseBooleanFlag(params.group_by_country);
         const includeAutoSelect = params.include_auto_select !== 'false';
-        const configId = params.configId;
         const lang = params.lang || c.get('lang');
 
-        let baseConfig;
-        if (configId) {
-            const storage = requireConfigStorage(services.configStorage);
-            baseConfig = await storage.getConfigById(configId);
-        }
+        const baseConfig = await resolveBaseConfig(params, services, 'surge', SURGE_CONFIG);
 
         const builder = new SurgeConfigBuilder(
             config,
